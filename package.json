@@ -1,0 +1,19 @@
+{
+  "name": "ona-code",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-provider SDLC SQLite REPL (CLEAN_ROOM_SPEC): Anthropic Messages, LM Studio / OpenAI-compatible chat. Node 22+.",
+  "engines": { "node": ">=22" },
+  "bin": { "ona": "./bin/agent.mjs" },
+  "scripts": {
+    "start": "node ./bin/agent.mjs",
+    "repl": "node ./bin/agent.mjs",
+    "verify": "node ./scripts/verify-sdlc-hook-order.mjs",
+    "acceptance": "bash ./scripts/sdlc-acceptance.sh"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "better-sqlite3": "^11.8.1"
+  }
+}

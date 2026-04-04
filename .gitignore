@@ -1,0 +1,6 @@
+agent.db
+agent.db-*
+node_modules/
+*.db-journal
+*.db-wal
+*.db-shm
