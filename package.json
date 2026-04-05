@@ -8,7 +8,8 @@
     "node": ">=22"
   },
   "bin": {
-    "ona": "./bin/agent.mjs"
+    "ona": "./bin/agent.mjs",
+    "ona-code": "./bin/agent.mjs"
   },
   "scripts": {
     "start": "node ./bin/agent.mjs",
