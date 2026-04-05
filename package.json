@@ -4,8 +4,12 @@
   "private": true,
   "type": "module",
   "description": "Multi-provider SDLC SQLite REPL (CLEAN_ROOM_SPEC): Anthropic Messages, LM Studio / OpenAI-compatible chat. Node 22+.",
-  "engines": { "node": ">=22" },
-  "bin": { "ona": "./bin/agent.mjs" },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "ona": "./bin/agent.mjs"
+  },
   "scripts": {
     "start": "node ./bin/agent.mjs",
     "repl": "node ./bin/agent.mjs",
@@ -14,6 +18,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "better-sqlite3": "^11.8.1"
+    "better-sqlite3": "^11.8.1",
+    "chalk": "^5.6.2",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0"
   }
 }

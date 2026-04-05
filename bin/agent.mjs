@@ -14,6 +14,7 @@ import { resolveWireModel, allModelIds } from '../lib/modelConfig.mjs'
 import { runHooks } from '../lib/hookplane.mjs'
 import { runUserTurn } from '../lib/orchestrate.mjs'
 import { closeAllMcpServers } from '../lib/mcp.mjs'
+import * as ui from '../lib/ui.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PKG_ROOT = path.resolve(__dirname, '..')
@@ -85,19 +86,37 @@ Commands: /help /model /login /logout /status /config /clear /exit`)
   }
 
   const rl = readline.createInterface({ input, output })
+  const spinner = new ui.Spinner({ write: s => output.write(s) })
   const io = {
-    write: s => output.write(s),
-    println: s => console.log(s),
+    write: s => { spinner.stop(); output.write(s) },
+    println: s => { spinner.stop(); console.log(s) },
     ask: q => rl.question(q),
+    spinner,
   }
 
-  printBanner(dbPath, opts.bare)
-  printProviderInfo(settings, io, opts.bare)
-  io.println('Commands: /help /model /login /logout /status /config /clear /exit\n')
+  // Banner
+  const v = JSON.parse(fs.readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8'))
+  output.write(ui.printBanner(v.version, dbPath, opts.bare))
+  try {
+    const wire = resolveWireModel(settings.model_config)
+    const base = (process.env.LM_STUDIO_BASE_URL || 'http://127.0.0.1:1234/v1').replace(/\/$/, '')
+    const provider = settings.model_config?.provider || 'lm_studio_local'
+    const endpoint = provider === 'lm_studio_local' ? `${base}/chat/completions`
+      : provider === 'openai_compatible' ? `${process.env.OPENAI_BASE_URL || '(unset)'}/chat/completions`
+      : `${process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com'}/v1/messages`
+    output.write(ui.printProviderBanner(provider, wire, endpoint))
+  } catch (e) {
+    output.write(ui.printProviderBanner(
+      settings.model_config?.provider || 'lm_studio_local',
+      `(${e.message})`,
+      '(not configured)'
+    ))
+  }
+  output.write(ui.colors.dim('  Type /help for commands\n\n'))
 
   while (true) {
     let line
-    try { line = (await rl.question('ona> ')).trim() } catch (e) {
+    try { line = (await rl.question(ui.formatPrompt())).trim() } catch (e) {
       if (e?.code === 'ERR_USE_AFTER_CLOSE') break; throw e
     }
     if (!line) continue
@@ -106,31 +125,19 @@ Commands: /help /model /login /logout /status /config /clear /exit`)
     if (line === '/exit' || line === '/quit') break
 
     if (line === '/help') {
-      io.println(`ona — SDLC SQLite REPL (CLEAN_ROOM_SPEC)
-  /help              Show this help
-  /model [id]        Show or change active model (immediate, no restart)
-  /login             Store credentials (API key, bearer, or OAuth)
-  /logout            Clear secure credentials
-  /status            Show credential status (no secrets printed)
-  /config            Show/edit current settings
-  /settings          Alias for /config
-  /clear             Clear conversation (aliases: /reset, /new)
-  /exit              Quit (alias: /quit)
-
-Provider: ${settings.model_config?.provider || 'claude_code_subscription'}
-DB: ${dbPath}`)
+      io.println(ui.formatHelp(settings.model_config?.provider || 'lm_studio_local', dbPath))
       continue
     }
 
     if (line === '/status') {
       const s = authStatusSummary({ bareMode: opts.bare, apiKeyHelper: settings.apiKeyHelper })
-      io.println(JSON.stringify(s, null, 2))
+      io.println(ui.formatStatus(s))
       continue
     }
 
     if (line === '/logout') {
       clearSecureCredentials()
-      io.println('Secure file cleared.')
+      io.println(ui.colors.success('  ✓ Credentials cleared.'))
       continue
     }
 
@@ -145,29 +152,28 @@ DB: ${dbPath}`)
       if (!arg) {
         try {
           const wire = resolveWireModel(settings.model_config)
-          io.println(`Current: provider=${settings.model_config.provider} model_id=${settings.model_config.model_id} wire=${wire}`)
-        } catch (e) { io.println(`Current: ${e.message}`) }
-        io.println('Available:')
+          io.println(`\n  ${ui.colors.key('Provider:')} ${ui.colors.provider(settings.model_config.provider)}`)
+          io.println(`  ${ui.colors.key('Model:')}    ${ui.colors.model(wire)}`)
+        } catch (e) { io.println(`  ${ui.colors.error(e.message)}`) }
+        io.println(`\n${ui.colors.header('Available models')}`)
         for (const m of allModelIds()) {
-          io.println(`  ${m.provider} / ${m.model_id}`)
+          io.println(`  ${ui.colors.provider(m.provider)} ${ui.colors.dim('/')} ${ui.colors.model(m.model_id)}`)
         }
-        io.println('Usage: /model <model_id> or /model <provider>/<model_id>')
+        io.println(`\n  ${ui.colors.dim('Usage: /model <name> or /model <provider>/<model_id>')}\n`)
         continue
       }
       const resolved = resolveModelArg(arg)
-      if (!resolved) { io.println(`Unknown model: ${arg}. Use /model to list available.`); continue }
+      if (!resolved) { io.println(ui.colors.error(`  Unknown model: ${arg}. Use /model to list.`)); continue }
       settings = updateEffectiveSettings(db, { model_config: resolved })
       try {
         const wire = resolveWireModel(settings.model_config)
-        io.println(`Model changed: ${resolved.provider}/${resolved.model_id} (wire: ${wire})`)
-      } catch (e) { io.println(`Model set but wire resolution: ${e.message}`) }
+        io.println(ui.formatModelChange(resolved.provider, resolved.model_id, wire))
+      } catch (e) { io.println(`  ${ui.colors.warning('Model set but: ' + e.message)}`) }
       continue
     }
 
     if (line === '/config' || line === '/settings') {
-      io.println('Current settings:')
-      io.println(JSON.stringify(settings, null, 2))
-      io.println('\nUse /model to change model. Edit .ona/settings.json for other changes.')
+      io.println(ui.formatConfig(settings))
       continue
     }
 
@@ -182,7 +188,7 @@ DB: ${dbPath}`)
       if (process.env.SDLC_DISABLE_ALL_HOOKS !== '1') {
         await runHooks(db, makeHookRt(), 'SessionStart', { source: 'clear', model: settings.model_config?.model_id ?? '' })
       }
-      io.println('Conversation cleared.')
+      io.println(ui.colors.success('  ✓ Conversation cleared.'))
       continue
     }
 
@@ -205,28 +211,6 @@ DB: ${dbPath}`)
   rl.close()
 }
 
-function printBanner(dbPath, bare) {
-  const v = JSON.parse(fs.readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8'))
-  console.log(`ona ${v.version} — AGENT_SDLC_DB=${dbPath}${bare ? ' [bare]' : ''}`)
-}
-
-function printProviderInfo(settings, io, bare) {
-  const provider = settings.model_config?.provider || 'claude_code_subscription'
-  if (provider === 'lm_studio_local') {
-    try {
-      const wire = resolveWireModel(settings.model_config)
-      const base = (process.env.LM_STUDIO_BASE_URL || 'http://127.0.0.1:1234/v1').replace(/\/$/, '')
-      io.println(`Provider: lm_studio_local  model: ${wire}`)
-      io.println(`Endpoint: ${base}/chat/completions`)
-    } catch (e) { io.println(`[config] ${e.message}`) }
-    io.println('LM Studio: load model, start server. No Anthropic credentials needed.')
-  } else if (provider === 'openai_compatible') {
-    io.println(`Provider: openai_compatible  base: ${process.env.OPENAI_BASE_URL || '(unset)'}`)
-  } else {
-    const st = authStatusSummary({ bareMode: bare, apiKeyHelper: settings.apiKeyHelper })
-    io.println(st.ok ? `Auth: ${st.kind} via ${st.source}` : 'Auth: none — set ANTHROPIC_API_KEY or run /login')
-  }
-}
 
 async function interactiveLogin(rl, io, bareMode) {
   if (bareMode) { io.println('Bare mode: only ANTHROPIC_API_KEY / apiKeyHelper allowed (§2.7 A7).'); return }
