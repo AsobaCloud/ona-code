@@ -65,14 +65,6 @@ Commands: /help /model /login /logout /status /config /clear /exit`)
   const db = openStore(dbPath)
   let settings = bootstrapSettings(db, cwd)
 
-  const provider = settings.model_config?.provider || 'claude_code_subscription'
-  if (provider === 'lm_studio_local' && settings.model_config?.model_id === 'lm_studio_server_routed') {
-    if (!process.env.LM_STUDIO_MODEL?.trim()) {
-      console.error('ona: LM_STUDIO_MODEL is required when model_config.model_id is lm_studio_server_routed.')
-      process.exit(1)
-    }
-  }
-
   let conversationId = randomUUID()
   let sessionId = randomUUID()
   db.prepare(`INSERT INTO conversations(id, project_dir, phase) VALUES (?,?, 'idle')`).run(conversationId, cwd)
@@ -265,12 +257,11 @@ function resolveModelArg(arg) {
     const match = all.find(x => x.provider === p && x.model_id === m)
     if (match) return match
   }
-  // Try model_id alone
+  // Try model_id alone (enum match)
   const match = all.find(x => x.model_id === arg)
   if (match) return match
-  // Try partial match
-  const partial = all.find(x => x.model_id.includes(arg) || x.provider.includes(arg))
-  return partial || null
+  // No enum match — treat as freeform LM Studio model name
+  return { provider: 'lm_studio_local', model_id: 'lm_studio_server_routed', lm_studio_model: arg }
 }
 
 main().catch(e => { console.error(e); process.exit(1) })
