@@ -132,21 +132,25 @@ async function mainInteractive(opts) {
     }
 
     if (trimmed === '/help') {
-      app.addSystemMessage(`SDLC Workflow:
-  /phase        Show current phase
-  /plan         Show plan status
-  /code         Implement approved plan
-  /test         Generate and run tests
+      app.addSystemMessage(`SDLC Status (read-only):
+  /phase        Current phase
+  /plan         Plan content
+  /test         Test results
   /verify       Coverage report
-  /done         Complete workflow
+  /code         Implementation status
+  /done         Workflow status
+
+Workflow transitions are automatic:
+  Plan → approve → implement → SubmitImplementation → approve → tests → approve → done
 
 Tools:
   /init         Create Ona.md
-  /diff         Show uncommitted changes
-  /cost         Token usage and cost
-  /doctor       Environment diagnostics
-  /permissions  View permission rules
-  /pr-comments  Show PR comments (requires gh)
+  /diff         Uncommitted changes
+  /cost         Token usage
+  /doctor       Diagnostics
+  /permissions  Permission rules
+  /pr-comments  PR comments (requires gh)
+  /issue        Create GitHub issue
   /compact      Compact conversation
   /team         Manage teams
 
@@ -155,7 +159,7 @@ Session:
   /login        Authenticate
   /logout       Clear credentials
   /status       Auth status
-  /config       Show settings
+  /config       Settings
   /clear        New conversation
   /exit         Quit`)
       return
@@ -366,84 +370,28 @@ Session:
     }
 
     if (trimmed === '/test') {
-      const phase = getPhase(db, conversationId)
-      if (phase !== 'implement' && phase !== 'test') {
-        app.addSystemMessage(`Cannot run tests in phase: ${phase}. Must be in implement or test phase.`)
-        return
-      }
-      const plan = db.prepare(`SELECT content FROM plans WHERE conversation_id = ? AND status = 'approved' ORDER BY id DESC LIMIT 1`).get(conversationId)
-      if (!plan) { app.addSystemMessage('No approved plan to test against.'); return }
-      app.addSystemMessage('Running tests against approved plan...')
-      const { generateAndRunTests } = await import('../lib/testgen.mjs')
-      settings = getEffectiveSettings(db)
-      const rt = { sessionId, conversationId, runtimeDbPath: dbPath, cwd, bareMode: opts.bare, settings }
-      const results = await generateAndRunTests(db, rt, plan.content, s => app.addSystemMessage(s))
-      if (phase === 'implement') setPhase(db, conversationId, 'test')
-      const passed = results.filter(r => r.passed).length
-      app.addSystemMessage(`Tests: ${passed}/${results.length} passed`)
-      for (const r of results) {
-        const icon = r.passed ? '✓' : '✗'
-        app.addSystemMessage(`  ${icon} ${r.criterion.slice(0, 80)}`)
-        if (!r.passed && r.output) app.addSystemMessage(`    ${r.output.split('\n')[0]}`)
-      }
+      const results = db.prepare(`SELECT detail FROM events WHERE conversation_id = ? AND event_type = 'test_result' ORDER BY id`).all(conversationId)
+      if (!results.length) { app.addSystemMessage('No test results yet. Tests run automatically when the model calls SubmitImplementation and you approve.'); return }
+      const passed = results.filter(r => JSON.parse(r.detail).passed).length
+      app.addSystemMessage(`Test results: ${passed}/${results.length} passed`)
+      for (const r of results) { const d = JSON.parse(r.detail); app.addSystemMessage(`  ${d.passed ? '✓' : '✗'} ${d.criterion}`) }
       return
     }
 
     if (trimmed === '/verify') {
-      const phase = getPhase(db, conversationId)
-      if (phase !== 'test') {
-        app.addSystemMessage(`Cannot verify in phase: ${phase}. Must be in test phase.`)
-        return
-      }
-      // Show coverage report from stored test results
       const results = db.prepare(`SELECT detail FROM events WHERE conversation_id = ? AND event_type = 'test_result' ORDER BY id`).all(conversationId)
-      if (!results.length) { app.addSystemMessage('No test results. Run /test first.'); return }
+      if (!results.length) { app.addSystemMessage('No coverage data. Tests run automatically on implementation approval.'); return }
       app.addSystemMessage('Coverage Report:')
-      let allPass = true
-      for (const r of results) {
-        const d = JSON.parse(r.detail)
-        const icon = d.passed ? '✓' : '✗'
-        if (!d.passed) allPass = false
-        app.addSystemMessage(`  ${icon} ${d.criterion}`)
-      }
+      for (const r of results) { const d = JSON.parse(r.detail); app.addSystemMessage(`  ${d.passed ? '✓' : '✗'} ${d.criterion}`) }
       const passed = results.filter(r => JSON.parse(r.detail).passed).length
-      app.addSystemMessage(`\nAggregate: ${passed}/${results.length} passed`)
-      if (allPass) {
-        const ok = await app.askUser('All tests pass. Transition to verify? [y/N] ')
-        if (/^y(es)?$/i.test(ok?.trim())) {
-          setPhase(db, conversationId, 'verify')
-          app.addSystemMessage('Phase: verify')
-        }
-      } else {
-        app.addSystemMessage('Cannot transition to verify: failing tests remain.')
-      }
+      app.addSystemMessage(`Aggregate: ${passed}/${results.length} passed`)
       return
     }
 
     if (trimmed === '/code') {
       const phase = getPhase(db, conversationId)
-      if (phase !== 'implement') {
-        app.addSystemMessage(`Cannot run /code in phase: ${phase}. Need approved plan (implement phase).`)
-        return
-      }
-      const plan = db.prepare(`SELECT content FROM plans WHERE conversation_id = ? AND status = 'approved' ORDER BY id DESC LIMIT 1`).get(conversationId)
-      if (!plan) { app.addSystemMessage('No approved plan.'); return }
-      app.addSystemMessage('Implementing approved plan...')
-      settings = getEffectiveSettings(db)
-      const rt = { sessionId, conversationId, runtimeDbPath: dbPath, cwd, bareMode: opts.bare, settings }
-      let streamBuf = ''
-      const io = {
-        write: s => { app.stopLoading(); streamBuf += s; app.updateStream(streamBuf) },
-        println: s => { app.stopLoading(); if (s) app.addSystemMessage(String(s)) },
-        ask: async (q) => app.askUser(String(q || '')),
-        spinner: { start: () => {}, stop: () => {} },
-        onToolStart: (name) => { app.addToolStart(name) },
-        onToolResult: (name, content, isError) => { app.addToolResult(name, content, isError) },
-      }
-      app.startLoading()
-      await runUserTurn(db, rt, `Implement the following approved plan. Execute each step, using tools as needed.\n\n${plan.content}`, io)
-      app.stopLoading()
-      if (streamBuf) { app.clearStream(); app.addAssistantMessage(streamBuf) }
+      if (phase === 'implement') app.addSystemMessage('Implementation in progress. The model will call SubmitImplementation when ready for review.')
+      else app.addSystemMessage(`Phase: ${phase}. Implementation happens automatically after plan approval.`)
       return
     }
 
@@ -513,26 +461,7 @@ Session:
 
     if (trimmed === '/done') {
       const phase = getPhase(db, conversationId)
-      if (phase !== 'verify') {
-        app.addSystemMessage(`Cannot complete in phase: ${phase}. Must be in verify phase.`)
-        return
-      }
-      const ok = await app.askUser('Mark workflow as done and commit all changes? [y/N] ')
-      if (/^y(es)?$/i.test(ok?.trim())) {
-        setPhase(db, conversationId, 'done')
-        // Auto-commit
-        const { spawnSync: sp } = await import('node:child_process')
-        const plan = db.prepare(`SELECT content FROM plans WHERE conversation_id = ? AND status = 'approved' ORDER BY id DESC LIMIT 1`).get(conversationId)
-        const planTitle = plan?.content?.split('\n').find(l => l.startsWith('#'))?.replace(/^#+\s*/, '') || 'SDLC workflow complete'
-        sp('git', ['add', '-A'], { cwd, encoding: 'utf8' })
-        const commit = sp('git', ['commit', '-m', `${planTitle}\n\nPlan approved and verified via ona SDLC workflow.`], { cwd, encoding: 'utf8', timeout: 30_000 })
-        if (commit.status === 0) {
-          const hash = sp('git', ['rev-parse', '--short', 'HEAD'], { cwd, encoding: 'utf8' }).stdout?.trim()
-          app.addSystemMessage(`Phase: done ✓\nCommitted: ${hash}`)
-        } else {
-          app.addSystemMessage(`Phase: done ✓\nCommit failed: ${(commit.stderr || '').trim()}`)
-        }
-      }
+      app.addSystemMessage(`Phase: ${phase}. Workflow completes automatically when all tests pass and you approve the coverage report.`)
       return
     }
 

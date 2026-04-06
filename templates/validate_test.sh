@@ -13,9 +13,9 @@ fi
 CONTENT=$(cat "$FILE")
 
 # 1. Template header present
-if ! echo "$CONTENT" | grep -qE '^# TEMPLATE: (tool_contract|phase_transition|hook_contract|e2e_workflow)$'; then
+if ! echo "$CONTENT" | grep -qE '^# TEMPLATE: (tool_contract|phase_transition|hook_contract|e2e_workflow|process_output|file_state|http_response)$'; then
   echo "FAIL: missing or invalid # TEMPLATE: header" >&2
-  echo "  Must be one of: tool_contract, phase_transition, hook_contract, e2e_workflow" >&2
+  echo "  Must be one of: tool_contract, phase_transition, hook_contract, e2e_workflow, process_output, file_state, http_response" >&2
   exit 1
 fi
 
