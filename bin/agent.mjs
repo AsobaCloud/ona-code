@@ -770,10 +770,24 @@ async function runEval(opts) {
   const toolName = parsed.tool
   const toolInput = parsed.input || {}
   if (!toolName) { console.error('Missing "tool" in eval JSON'); process.exit(1) }
+
+  // If an existing conversation in implement phase exists, use it (for testing with seeded DBs)
+  let { conversationId, sessionId } = ctx
+  const existingImpl = ctx.db.prepare(`SELECT id FROM conversations WHERE phase = 'implement' ORDER BY created_at DESC LIMIT 1`).get()
+  if (existingImpl) {
+    conversationId = existingImpl.id
+    const existingSess = ctx.db.prepare(`SELECT session_id FROM sessions WHERE conversation_id = ? ORDER BY started_at DESC LIMIT 1`).get(conversationId)
+    if (existingSess) sessionId = existingSess.session_id
+    else {
+      sessionId = randomUUID()
+      ctx.db.prepare(`INSERT INTO sessions(session_id, conversation_id) VALUES (?,?)`).run(sessionId, conversationId)
+    }
+  }
+
   const io = { write: s => process.stdout.write(s), println: s => console.log(s), ask: async () => 'y' }
-  const execCtx = { sessionId: ctx.sessionId, conversationId: ctx.conversationId, cwd: ctx.cwd, settings: ctx.settings }
+  const execCtx = { sessionId, conversationId, cwd: ctx.cwd, settings: ctx.settings }
   const result = await executeBuiltinTool(ctx.db, execCtx, toolName, toolInput, io)
-  appendEntry(ctx.db, ctx.sessionId, 'tool_result', makeToolResultPayload(randomUUID(), result.content, result.is_error), null)
+  appendEntry(ctx.db, sessionId, 'tool_result', makeToolResultPayload(randomUUID(), result.content, result.is_error), null)
   console.log(JSON.stringify(result))
   process.exit(result.is_error ? 1 : 0)
 }
