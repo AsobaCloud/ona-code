@@ -100,6 +100,8 @@ async function mainInteractive(opts) {
     wireModel = resolveWireModel(settings.model_config)
     const base = (process.env.LM_STUDIO_BASE_URL || 'http://127.0.0.1:1234/v1').replace(/\/$/, '')
     endpoint = provider === 'lm_studio_local' ? `${base}/chat/completions`
+      : provider === 'zhipu' ? 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
+      : provider === 'ollama' ? 'http://192.168.5.238:11435/v1/chat/completions'
       : provider === 'openai_compatible' ? `${process.env.OPENAI_BASE_URL || '(unset)'}/chat/completions`
       : `${process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com'}/v1/messages`
   } catch (e) { wireModel = `(${e.message})` }
@@ -548,6 +550,8 @@ async function mainPipe(opts) {
   output.write(ui.printBanner(pkg.version, dbPath, opts.bare))
   const base = (process.env.LM_STUDIO_BASE_URL || 'http://127.0.0.1:1234/v1').replace(/\/$/, '')
   const endpoint = provider === 'lm_studio_local' ? `${base}/chat/completions`
+    : provider === 'zhipu' ? 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
+    : provider === 'ollama' ? 'http://192.168.5.238:11435/v1/chat/completions'
     : provider === 'openai_compatible' ? `${process.env.OPENAI_BASE_URL || '(unset)'}/chat/completions`
     : `${process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com'}/v1/messages`
   output.write(ui.printProviderBanner(provider, wireModel, endpoint))
