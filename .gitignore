@@ -4,3 +4,8 @@ node_modules/
 *.db-journal
 *.db-wal
 *.db-shm
+.claude-code/
+.DS_Store
+.vscode/
+.ona/
+test.txt

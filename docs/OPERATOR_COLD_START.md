@@ -37,6 +37,17 @@ From clean clone to first successful model turn in ≤12 steps.
 6. `npm start`
 7. Type a message at the `ona>` prompt
 
+## Zhipu AI (cloud)
+
+1. `git clone <repo-url> ona-code && cd ona-code`
+2. `npm install`
+3. Create `.ona/settings.json`:
+   ```bash
+   mkdir -p .ona && echo '{"model_config":{"provider":"zhipu","model_id":"glm_4_7_flash"}}' > .ona/settings.json
+   ```
+4. `npm start`
+5. Run `/login` and choose option 4 to save your ZAI API key
+
 ## Verify
 
 ```bash

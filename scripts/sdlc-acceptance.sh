@@ -157,8 +157,8 @@ tool_one() {
   local conv_id
   conv_id=$(db "SELECT id FROM conversations LIMIT 1")
   db "INSERT INTO plans(conversation_id,content,hash,status) VALUES ('$conv_id','test plan','abc','approved')"
-  # Use --eval which respects the existing DB state
-  SDLC_DISABLE_ALL_HOOKS=1 node "$ONA" --eval '{"tool":"'"$tool"'","input":'"$args"'}' 2>&1 || true
+  # Use --eval which respects the existing DB state; use ACCEPT_TMP as cwd so writes stay in temp dir
+  SDLC_DISABLE_ALL_HOOKS=1 node "$ONA" --eval '{"tool":"'"$tool"'","input":'"$args"'}' --cwd "$ACCEPT_TMP" 2>&1 || true
 }
 
 export -f ona_pipe db put_effective_json fresh_db
@@ -396,10 +396,17 @@ row_92() {
 run_check ROW-92 row_92
 
 row_95() {
-  # Planning gate blocks Write in idle (all mutating tools blocked outside implement)
+  # §8.3 Planning gate blocks Write ONLY in planning phase without an approved plan
   fresh_db row95
-  pj=$(SDLC_DISABLE_ALL_HOOKS=1 node "$ONA" --eval '{"tool":"Write","input":{"file_path":"/tmp/sdlc_block","content":"x"}}' 2>&1 || true)
-  echo "$pj" | grep -q "denied\|SDLC"
+  # In idle phase, Write should NOT be blocked by planning gate
+  pj=$(SDLC_DISABLE_ALL_HOOKS=1 node "$ONA" --eval '{"tool":"Write","input":{"file_path":"'"$ACCEPT_TMP/sdlc_block_95.txt"'","content":"x"}}' 2>&1 || true)
+  # Should succeed (not denied by planning gate) — may be denied by permissions but not §8.3
+  # Transition to planning phase and verify Write IS blocked there
+  fresh_db row95b
+  CONV=$(db "SELECT id FROM conversations LIMIT 1")
+  db "UPDATE conversations SET phase='planning' WHERE id='$CONV'"
+  pj2=$(SDLC_DISABLE_ALL_HOOKS=1 node "$ONA" --eval '{"tool":"Write","input":{"file_path":"'"$ACCEPT_TMP/sdlc_block_95b.txt"'","content":"x"}}' 2>&1 || true)
+  echo "$pj2" | grep -q "denied\|SDLC\|planning"
 }
 run_check ROW-95 row_95
 
@@ -441,7 +448,28 @@ row_111() {
 }
 run_check ROW-111 row_111
 
-# ═══ Summary ══════════════════════════════════════════════════
+# ═══ §F.2 Coverage Validation ═════════════════════════════════
+
+echo "[§F.2 Coverage Validation]"
+
+# Run coverage validation to ensure all normative requirements have passing tests
+COVERAGE_VALIDATOR="$REPO_ROOT/tests/spec-behavioral/coverage/validate-coverage.sh"
+if [[ -f "$COVERAGE_VALIDATOR" ]]; then
+    if "$COVERAGE_VALIDATOR" --format text >/dev/null 2>&1; then
+        PASS=$((PASS + 1))
+        echo "  PASS: Coverage validation"
+    else
+        echo "  FAIL: Coverage validation" >&2
+        exit 1
+    fi
+    TOTAL=$((TOTAL + 1))
+else
+    echo "  SKIP: Coverage validator not found" >&2
+    SKIP=$((SKIP + 1))
+    TOTAL=$((TOTAL + 1))
+fi
+
+# ═══ Summary ══════════════════════════════════════════════════════
 
 echo ""
 echo "=== Results: $PASS passed, $SKIP skipped, $((TOTAL - PASS - SKIP)) failed out of $TOTAL ==="

@@ -1,0 +1,287 @@
+# Implementation Plan
+
+## Overview
+
+This plan systematically builds comprehensive behavioral tests for every normative requirement in CLEAN_ROOM_SPEC.md. The approach follows the bugfix workflow: first explore the bug condition (missing coverage), then preserve existing tests, then implement the fix.
+
+---
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - Missing Behavioral Test Coverage
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **GOAL**: Surface counterexamples demonstrating missing test coverage
+  - **Method**: Parse CLEAN_ROOM_SPEC.md for normative keywords (must/shall/required/forbidden), extract section IDs, cross-reference against existing test files in `tests/spec-behavioral/`
+  - **Expected counterexamples**:
+    - §2.7-2.8: No behavioral tests for A1-A7, O1, L1 authentication capabilities
+    - §5: No behavioral tests for 24 hook events, ordinal ordering, permission merge
+    - §7: No behavioral tests for 21 built-in tools, error classification
+    - §8.2-8.8: No behavioral tests for phase transitions, epistemic isolation, coverage gates
+  - Run analysis on current test suite
+  - **EXPECTED OUTCOME**: Analysis FAILS (proves coverage gaps exist)
+  - Document specific missing coverage areas with section references
+  - _Requirements: 2.1, 2.2, 2.3_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Existing Test Functionality
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe: Run existing tests in `tests/spec-behavioral/` and record all passing tests
+  - Document: Which sections are currently covered (1, 2.4, 4.*, 8.1 per design)
+  - Write property: For each existing test file, assert it continues to pass
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (confirms baseline behavior to preserve)
+  - _Requirements: 3.1, 3.2, 3.3, 3.4_
+
+- [ ] 3. Fix for Missing Behavioral Test Coverage
+
+  - [x] 3.1 Create specification parser and coverage analyzer
+    - Create `tests/spec-behavioral/lib/spec-parser.sh` to extract normative requirements
+    - Parse for keywords: "must", "shall", "required", "forbidden" (per §0.1)
+    - Extract section IDs and requirement text
+    - Output structured mapping: `{section_id, requirement_text, capability_id}`
+    - Create `tests/spec-behavioral/lib/coverage-matrix.sh` to compare against existing tests
+    - Generate gap report showing uncovered requirements
+    - _Bug_Condition: No systematic mapping of spec requirements to tests_
+    - _Expected_Behavior: Automated tool identifies all coverage gaps_
+    - _Preservation: Does not modify existing tests_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.2 Implement authentication behavioral tests (§2.7-2.8)
+    - Create `tests/spec-behavioral/section-2.7-auth-capabilities.sh`
+    - Test A1 (API key via environment): Set ANTHROPIC_API_KEY, invoke model call, verify auth used
+    - Test A2 (Bearer via environment): Set ANTHROPIC_AUTH_TOKEN, verify bearer auth
+    - Test A3 (Interactive OAuth): Invoke `/login`, verify OAuth flow initiated (mock browser)
+    - Test A4 (Logout): Invoke `/logout`, verify session cleared from secure storage
+    - Test A5 (Auth status): Invoke `/status`, verify credential class shown without secrets
+    - Test A6 (apiKey helper): Configure helper, verify invocation before model call
+    - Test A7 (Bare mode): Run with `--bare`, verify OAuth/keychain paths disabled
+    - Test O1 (OpenAI compatible): Set OPENAI_API_KEY + OPENAI_BASE_URL, verify auth
+    - Test L1 (LM Studio local): Set LM_STUDIO_* vars, verify local endpoint auth
+    - Create `tests/spec-behavioral/section-2.8-credential-storage.sh`
+    - Test: Verify no secrets in SQLite (grep AGENT_SDLC_DB for key patterns)
+    - Test: Verify no secrets in transcript_entries, settings_snapshot, hook stdin
+    - _Bug_Condition: No behavioral tests for §2.7-2.8 authentication requirements_
+    - _Expected_Behavior: All A1-A7, O1, L1 capabilities have behavioral validation_
+    - _Preservation: No impact on existing auth functionality_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.3 Implement hook plane behavioral tests (§5)
+    - Create `tests/spec-behavioral/section-5.1-matcher-logic.sh`
+    - Test: PreToolUse matches tool_name matcher
+    - Test: SessionStart matches source matcher
+    - Test: Notification matches notification_type matcher
+    - Test: FileChanged matches file_path basename
+    - Create `tests/spec-behavioral/section-5.2-ordinal-order.sh`
+    - Test: Hooks execute in ascending hook_ordinal order
+    - Test: Adjacent identical hooks deduplicated (keep first)
+    - Create `tests/spec-behavioral/section-5.4-exit-codes.sh`
+    - Test: Exit 0 = success, parse JSON if stdout starts with `{`
+    - Test: Exit 2 = blocking (PreToolUse/UserPromptSubmit)
+    - Test: Other exit = non-blocking failure, continue chain
+    - Create `tests/spec-behavioral/section-5.5-json-validation.sh`
+    - Test: Valid JSON stdout matches Appendix B schema
+    - Test: `{"async":true}` rejected per §5.8
+    - Create `tests/spec-behavioral/section-5.6-permission-merge.sh`
+    - Test: deny > ask > allow > unset precedence
+    - Test: Exit 2 appends to agg_blocks
+    - Test: PreToolUse skips remaining hooks on deny/block
+    - Create `tests/spec-behavioral/section-5.11-hook-execution.sh`
+    - Test: Shell defaults to bash, falls back to sh
+    - Test: Stdin has exactly one trailing newline
+    - Test: UTF-8 decode with U+FFFD replacement for invalid bytes
+    - Test: 4 MiB cap per stream with [SDLC_OUTPUT_TRUNCATED]
+    - Test: Environment includes AGENT_SDLC_DB, SDLC_HOOK=1
+    - Create `tests/spec-behavioral/section-5.12-permission-rules.sh`
+    - Test: Permission rules evaluated after PreToolUse chain
+    - Test: Rule matching matches reference behavior
+    - Test: defaultMode enum: default|acceptEdits|bypassPermissions|plan|dontAsk
+    - Test: Decision persisted to tool_permission_log on ask
+    - _Bug_Condition: No behavioral tests for §5 hook plane requirements_
+    - _Expected_Behavior: All hook events, ordering, and persistence validated_
+    - _Preservation: No impact on existing hook functionality_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.4 Implement tool taxonomy behavioral tests (§7)
+    - Create `tests/spec-behavioral/section-7.1-tool-contracts.sh`
+    - Test Read: Valid file returns content, is_error=false
+    - Test Read: Missing file returns error, is_error=true
+    - Test Write: Valid write returns summary, is_error=false
+    - Test Edit: Valid edit returns summary, is_error=false
+    - Test Bash: Exit 0 returns stdout+stderr, is_error=false
+    - Test Bash: Exit non-zero returns output, is_error=true (tool_rejected)
+    - Test Bash: Timeout returns [SDLC_INTERNAL] prefix, is_error=true
+    - Test Glob: Returns UTF-8 listing, empty result is_error=false
+    - Test Grep: Returns matches, is_error=false
+    - Test WebFetch: HTTP 2xx returns content (capped at 1 MiB)
+    - Test WebFetch: HTTP 4xx/5xx returns is_error=true
+    - Test WebSearch: Transport failure returns is_error=true
+    - Test MCP tools: mcp__<server>__<tool> naming, 120s timeout
+    - Create `tests/spec-behavioral/section-7.2-tool-completeness.sh`
+    - Test: All 21 built-in tools have complete implementations
+    - Test: No tool returns "not implemented" or TODO stub
+    - Test: Each tool returns proper tool_result per Appendix C
+    - _Bug_Condition: No behavioral tests for §7 tool taxonomy_
+    - _Expected_Behavior: All 21 tools validated for contract compliance_
+    - _Preservation: No impact on existing tool functionality_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.5 Implement workflow state behavioral tests (§8)
+    - Create `tests/spec-behavioral/section-8.1-phase-enum.sh`
+    - Test: conversations.phase only accepts: idle|planning|implement|test|verify|done
+    - Test: Invalid phase value rejected
+    - Create `tests/spec-behavioral/section-8.2-phase-transitions.sh`
+    - Test: any → planning via EnterPlanMode
+    - Test: planning → implement requires approved plan row
+    - Test: implement → test after behavioral tests generated
+    - Test: test → verify after all tests pass
+    - Test: verify → done after operator approval
+    - Test: FORBIDDEN implement → verify direct transition
+    - Test: Phase UPDATE in same transaction as dependent rows
+    - Create `tests/spec-behavioral/section-8.3-planning-gate.sh`
+    - Test: Write denied during planning without approved plan
+    - Test: Edit denied during planning without approved plan
+    - Test: Bash denied during planning without approved plan
+    - Test: NotebookEdit denied during planning without approved plan
+    - Test: Other tools allowed during planning
+    - Create `tests/spec-behavioral/section-8.5-epistemic-isolation.sh`
+    - Test: Test generator receives only allowed inputs (plan text, public contracts)
+    - Test: Test generator FORBIDDEN from implementation source files
+    - Test: Test generator must use template from templates/ directory
+    - Test: Plan approval rejects criteria missing [template: ...] tag
+    - Create `tests/spec-behavioral/section-8.5.2-observable-assertions.sh`
+    - Test: Assertions target DB state, file state, process output, tool results, hook records
+    - Test: FORBIDDEN assertions on internal function returns
+    - Create `tests/spec-behavioral/section-8.5.3-anti-mock.sh`
+    - Test: Tests exercise real code paths
+    - Test: FORBIDDEN mocking/stubbing implementation modules
+    - Create `tests/spec-behavioral/section-8.6-coverage-gate.sh`
+    - Test: Each test case traces to plan success criterion
+    - Test: test → verify blocked if any requirement lacks test
+    - Test: test → verify blocked if any test fails
+    - Create `tests/spec-behavioral/section-8.7-verify-reporting.sh`
+    - Test: Verify phase displays coverage matrix
+    - Test: Verify phase displays test output
+    - Test: Verify phase displays uncovered requirements
+    - _Bug_Condition: No behavioral tests for §8 workflow requirements_
+    - _Expected_Behavior: All phase transitions and gates validated_
+    - _Preservation: No impact on existing workflow functionality_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.6 Implement provider and REPL behavioral tests (§2.1-2.6, 2.9-2.10)
+    - Create `tests/spec-behavioral/section-2.1-provider-enum.sh`
+    - Test: claude_code_subscription provider operational
+    - Test: openai_compatible provider operational
+    - Test: lm_studio_local provider operational
+    - Test: Invalid provider rejected before network I/O
+    - Create `tests/spec-behavioral/section-2.2-model-config.sh`
+    - Test: model_config contains only provider, model_id
+    - Test: FORBIDDEN keys (secrets, tokens) rejected
+    - Test: Invalid model_id for provider rejected
+    - Create `tests/spec-behavioral/section-2.3-env-variables.sh`
+    - Test: ANTHROPIC_API_KEY used for Messages API
+    - Test: OPENAI_API_KEY + OPENAI_BASE_URL required for openai_compatible
+    - Test: LM_STUDIO_* defaults applied
+    - Create `tests/spec-behavioral/section-2.5-turn-loop.sh`
+    - Test: Sequential processing, no Promise.all for same session_id
+    - Test: Transcript entries committed per §4.8
+    - Create `tests/spec-behavioral/section-2.9-repl-commands.sh`
+    - Test: /help lists available commands
+    - Test: /model changes active model without restart
+    - Test: /config changes session preferences
+    - Test: /clear clears conversation, emits hooks
+    - Create `tests/spec-behavioral/section-2.10-provider-backends.sh`
+    - Test: Each §2.1 provider completes full turn end-to-end
+    - _Bug_Condition: No behavioral tests for §2 provider requirements_
+    - _Expected_Behavior: All providers and REPL commands validated_
+    - _Preservation: No impact on existing provider functionality_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.7 Implement storage behavioral tests (§4)
+    - Create `tests/spec-behavioral/section-4.1-db-location.sh`
+    - Test: AGENT_SDLC_DB sets SQLite file path
+    - Test: PRAGMA foreign_keys=ON on every connection
+    - Test: PRAGMA journal_mode=WAL
+    - Create `tests/spec-behavioral/section-4.3-schema.sh`
+    - Test: All tables from §4.3 DDL present
+    - Test: memories_fts virtual table exists
+    - Create `tests/spec-behavioral/section-4.4-bootstrap.sh`
+    - Test: settings.json imported to settings_snapshot at startup
+    - Test: FORBIDDEN mid-turn re-read of settings file
+    - Create `tests/spec-behavioral/section-4.5-transcript.sh`
+    - Test: sequence strictly increasing per session_id
+    - Test: entry_type in closed set
+    - Create `tests/spec-behavioral/section-4.6-plans.sh`
+    - Test: plans.content is authoritative (not filesystem)
+    - Test: plans.status in closed enum
+    - Test: Plan approval requires [template: ...] tags
+    - Create `tests/spec-behavioral/section-4.8-concurrency.sh`
+    - Test: Single writer mutex enforced
+    - Test: Transaction groupings per table
+    - Test: PRAGMA busy_timeout=30000
+    - _Bug_Condition: No behavioral tests for §4 storage requirements_
+    - _Expected_Behavior: All storage contracts validated_
+    - _Preservation: Existing §4 tests continue to pass_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.8 Implement hook stdin/stdout behavioral tests (§6, §11-12)
+    - Create `tests/spec-behavioral/section-6-hook-stdin.sh`
+    - Test: Every stdin includes required fields (hook_event_name, session_id, conversation_id, runtime_db_path, cwd)
+    - Test: transcript_path NOT included (fork from reference)
+    - Create `tests/spec-behavioral/section-11-hook-events.sh`
+    - Test: PreToolUse stdin includes tool_name, tool_input, tool_use_id
+    - Test: PostToolUse stdin includes tool_response
+    - Test: SessionStart stdin includes source enum
+    - Test: All 24 events from §3 have correct stdin fields
+    - Create `tests/spec-behavioral/section-12-hook-stdout.sh`
+    - Test: Valid stdout matches Appendix B schema
+    - Test: hookSpecificOutput matches event type
+    - Test: PermissionUpdate types validated
+    - _Bug_Condition: No behavioral tests for §6, §11-12 hook I/O_
+    - _Expected_Behavior: All hook stdin/stdout contracts validated_
+    - _Preservation: No impact on existing hook I/O_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.9 Create coverage tracking system
+    - Create `tests/spec-behavioral/coverage/coverage-tracker.sh`
+    - Generate coverage matrix: requirement → test file → pass/fail
+    - Output: `tests/spec-behavioral/coverage/matrix.json`
+    - Create `tests/spec-behavioral/coverage/validate-coverage.sh`
+    - Exit 0 iff all normative requirements have ≥1 passing test
+    - Exit 1 with report if any requirement lacks coverage
+    - Integrate with `scripts/sdlc-acceptance.sh` per §F.2
+    - _Bug_Condition: No systematic coverage tracking_
+    - _Expected_Behavior: Automated coverage validation_
+    - _Preservation: Integration with existing acceptance script_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.10 Update test runner and integration
+    - Update `tests/spec-behavioral/run-all.sh` to include all new tests
+    - Ensure execution order: section-2 → section-4 → section-5 → section-6 → section-7 → section-8
+    - Verify all tests follow bash template pattern from §8.8
+    - Validate integration with CI/CD pipeline
+    - _Bug_Condition: New tests not integrated with runner_
+    - _Expected_Behavior: All tests execute in correct order_
+    - _Preservation: Existing test patterns continue_
+    - _Requirements: 3.1, 3.2, 3.3, 3.4_
+
+  - [x] 3.11 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Comprehensive Specification Coverage
+    - **IMPORTANT**: Re-run the SAME analysis from task 1
+    - Run spec parser and coverage analyzer
+    - Verify all normative requirements have corresponding tests
+    - **EXPECTED OUTCOME**: Analysis PASSES (all gaps filled)
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.12 Verify preservation tests still pass
+    - **Property 2: Preservation** - Existing Test Functionality
+    - **IMPORTANT**: Re-run the SAME tests from task 2
+    - Run all existing tests from original test suite
+    - **EXPECTED OUTCOME**: Tests PASS (no regressions)
+    - Confirm existing tests for sections 1, 2.4, 4.*, 8.1 pass identically
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Run complete behavioral test suite: `tests/spec-behavioral/run-all.sh`
+  - Run coverage validation: `tests/spec-behavioral/coverage/validate-coverage.sh`
+  - Verify all normative requirements in CLEAN_ROOM_SPEC.md have behavioral tests
+  - Confirm no specification violations can slip through undetected
+  - Ask the user if questions arise about test results or coverage validation

@@ -15,7 +15,8 @@
     "start": "node ./bin/agent.mjs",
     "repl": "node ./bin/agent.mjs",
     "verify": "node ./scripts/verify-sdlc-hook-order.mjs",
-    "acceptance": "bash ./scripts/sdlc-acceptance.sh"
+    "acceptance": "bash ./scripts/sdlc-acceptance.sh",
+    "test:bugs": "bash tests/bugs/run-all.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

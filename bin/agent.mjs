@@ -25,7 +25,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PKG_ROOT = path.resolve(__dirname, '..')
 
 function parseArgs(argv) {
-  const args = { bare: false, cwd: process.cwd(), help: false, eval: null, transition: null, conversation: null, initDb: false }
+  const args = { bare: false, cwd: process.cwd(), help: false, eval: null, transition: null, conversation: null, initDb: false, compact: false }
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--help' || argv[i] === '-h') args.help = true
     else if (argv[i] === '--bare') args.bare = true
@@ -34,6 +34,7 @@ function parseArgs(argv) {
     else if (argv[i] === '--transition' && argv[i + 1]) args.transition = argv[++i]
     else if (argv[i] === '--conversation' && argv[i + 1]) args.conversation = argv[++i]
     else if (argv[i] === '--init-db') args.initDb = true
+    else if (argv[i] === '--compact') args.compact = true
   }
   return args
 }
@@ -189,7 +190,7 @@ Session:
         return
       }
       app.addSystemMessage('Login: secrets stored in ~/.ona/secure/ (never in SQLite).')
-      const kind = await app.askUser('Type (1) API key  (2) Bearer token  (3) Browser OAuth: ')
+      const kind = await app.askUser('Type (1) API key  (2) Bearer token  (3) Browser OAuth  (4) Zhipu API key:\n')
       if (kind === '1') {
         const key = await app.askUser('ANTHROPIC_API_KEY: ')
         if (!key?.trim()) { app.addSystemMessage('Aborted.'); return }
@@ -202,6 +203,10 @@ Session:
         try {
           await interactiveOAuthLogin({ println: s => app.addSystemMessage(s) })
         } catch (e) { app.addSystemMessage(`OAuth failed: ${e.message}`) }
+      } else if (kind === '4') {
+        const key = await app.askUser('ZAI API key: ')
+        if (!key?.trim()) { app.addSystemMessage('Aborted.'); return }
+        saveSecureCredentials({ zhipuApiKey: key.trim() }); app.addSystemMessage('Saved Zhipu API key.')
       } else { app.addSystemMessage('Invalid choice.') }
       return
     }
@@ -434,33 +439,6 @@ Session:
       return
     }
 
-    if (trimmed === '/issue') {
-      app.addSystemMessage('Create a new issue (SEP format)')
-      const title = await app.askUser('Title: ')
-      if (!title?.trim()) { app.addSystemMessage('Aborted.'); return }
-      const summary = await app.askUser('Summary: ')
-      const motivation = await app.askUser('Motivation: ')
-      const change = await app.askUser('Proposed change: ')
-      const criteria = await app.askUser('Acceptance criteria: ')
-      const priority = await app.askUser('Priority (P0/P1/P2): ')
-      const size = await app.askUser('Size (XS/S/M/L/XL): ')
-      const pLabel = ['P0', 'P1', 'P2'].includes(priority?.trim().toUpperCase()) ? priority.trim().toUpperCase() : 'P2'
-      const sLabel = ['XS', 'S', 'M', 'L', 'XL'].includes(size?.trim().toUpperCase()) ? size.trim().toUpperCase() : 'M'
-      const body = `## Summary\n${summary || ''}\n\n## Motivation\n${motivation || ''}\n\n## Proposed Change\n${change || ''}\n\n## Acceptance Criteria\n${criteria || ''}`
-      const { spawnSync: sp } = await import('node:child_process')
-      const labels = `${pLabel},${sLabel},Backlog`
-      for (const l of [pLabel, sLabel, 'Backlog']) {
-        sp('gh', ['label', 'create', l, '--force'], { cwd, encoding: 'utf8', timeout: 10_000 })
-      }
-      const r = sp('gh', ['issue', 'create', '--title', title.trim(), '--body', body, '--label', labels], { cwd, encoding: 'utf8', timeout: 30_000 })
-      if (r.status === 0) {
-        app.addSystemMessage(`✓ Issue created: ${r.stdout.trim()}`)
-      } else {
-        app.addSystemMessage(`✗ Failed: ${(r.stderr || '').trim()}`)
-      }
-      return
-    }
-
     if (trimmed === '/done') {
       const phase = getPhase(db, conversationId)
       app.addSystemMessage(`Phase: ${phase}. Workflow completes automatically when all tests pass and you approve the coverage report.`)
@@ -477,7 +455,7 @@ Session:
     app.startLoading()
     const rt = {
       sessionId, conversationId, runtimeDbPath: dbPath, cwd,
-      bareMode: opts.bare, settings, onaInstructions,
+      bareMode: opts.bare, settings, onaInstructions: onaInstructions.content,
     }
     let streamBuf = ''
     const io = {
@@ -738,7 +716,7 @@ async function mainPipe(opts) {
 async function interactiveLogin(rl, io, bareMode) {
   if (bareMode) { io.println('Bare mode: only ANTHROPIC_API_KEY / apiKeyHelper allowed (§2.7 A7).'); return }
   io.println('Login: secrets stored in ~/.ona/secure/ (never in SQLite).')
-  const kind = (await rl.question('Type (1) API key  (2) Bearer token  (3) Browser OAuth: ')).trim()
+  const kind = (await rl.question('Type (1) API key  (2) Bearer token  (3) Browser OAuth  (4) Zhipu API key:\n')).trim()
   if (kind === '1') {
     const key = (await rl.question('ANTHROPIC_API_KEY: ')).trim()
     if (!key) { io.println('Aborted.'); return }
@@ -749,6 +727,10 @@ async function interactiveLogin(rl, io, bareMode) {
     saveSecureCredentials({ bearerToken: tok }); io.println('Saved bearer token.')
   } else if (kind === '3') {
     try { await interactiveOAuthLogin(io) } catch (e) { io.println(`OAuth failed: ${e.message}`) }
+  } else if (kind === '4') {
+    const key = (await rl.question('ZAI API key: ')).trim()
+    if (!key) { io.println('Aborted.'); return }
+    saveSecureCredentials({ zhipuApiKey: key }); io.println('Saved Zhipu API key.')
   } else { io.println('Invalid choice.') }
 }
 
@@ -775,16 +757,30 @@ async function runEval(opts) {
   const toolInput = parsed.input || {}
   if (!toolName) { console.error('Missing "tool" in eval JSON'); process.exit(1) }
 
-  // If an existing conversation in implement phase exists, use it (for testing with seeded DBs)
+  // If an existing conversation in implement or planning phase exists, use it (for testing with seeded DBs)
+  // --conversation flag takes priority
   let { conversationId, sessionId } = ctx
-  const existingImpl = ctx.db.prepare(`SELECT id FROM conversations WHERE phase = 'implement' ORDER BY created_at DESC LIMIT 1`).get()
-  if (existingImpl) {
-    conversationId = existingImpl.id
-    const existingSess = ctx.db.prepare(`SELECT session_id FROM sessions WHERE conversation_id = ? ORDER BY started_at DESC LIMIT 1`).get(conversationId)
-    if (existingSess) sessionId = existingSess.session_id
-    else {
-      sessionId = randomUUID()
-      ctx.db.prepare(`INSERT INTO sessions(session_id, conversation_id) VALUES (?,?)`).run(sessionId, conversationId)
+  if (opts.conversation) {
+    const specified = ctx.db.prepare(`SELECT id FROM conversations WHERE id = ?`).get(opts.conversation)
+    if (specified) {
+      conversationId = specified.id
+      const existingSess = ctx.db.prepare(`SELECT session_id FROM sessions WHERE conversation_id = ? ORDER BY started_at DESC LIMIT 1`).get(conversationId)
+      if (existingSess) sessionId = existingSess.session_id
+      else {
+        sessionId = randomUUID()
+        ctx.db.prepare(`INSERT INTO sessions(session_id, conversation_id) VALUES (?,?)`).run(sessionId, conversationId)
+      }
+    }
+  } else {
+    const existingImpl = ctx.db.prepare(`SELECT id FROM conversations WHERE phase IN ('implement','planning') ORDER BY last_active DESC LIMIT 1`).get()
+    if (existingImpl) {
+      conversationId = existingImpl.id
+      const existingSess = ctx.db.prepare(`SELECT session_id FROM sessions WHERE conversation_id = ? ORDER BY started_at DESC LIMIT 1`).get(conversationId)
+      if (existingSess) sessionId = existingSess.session_id
+      else {
+        sessionId = randomUUID()
+        ctx.db.prepare(`INSERT INTO sessions(session_id, conversation_id) VALUES (?,?)`).run(sessionId, conversationId)
+      }
     }
   }
 
@@ -794,6 +790,20 @@ async function runEval(opts) {
   appendEntry(ctx.db, sessionId, 'tool_result', makeToolResultPayload(randomUUID(), result.content, result.is_error), null)
   console.log(JSON.stringify(result))
   process.exit(result.is_error ? 1 : 0)
+}
+
+// ── CLI: --compact ───────────────────────────────────────────
+async function runCompact(opts) {
+  const ctx = bootstrap(opts)
+  const { db, dbPath, settings, cwd } = ctx
+  // Use specified conversation or most recent
+  const convId = opts.conversation || ctx.conversationId
+  const sess = db.prepare(`SELECT session_id FROM sessions WHERE conversation_id = ? ORDER BY started_at DESC LIMIT 1`).get(convId)
+  const sessionId = sess?.session_id || ctx.sessionId
+  const rt = { sessionId, conversationId: convId, runtimeDbPath: dbPath, cwd, bareMode: opts.bare, settings }
+  const summary = await compactConversation(db, rt, async (text) => `[Compacted: ${text.split('\n').length} messages]`, s => console.log(s))
+  if (summary) console.log(`Summary: ${summary}`)
+  process.exit(0)
 }
 
 // ── CLI: --transition ────────────────────────────────────────
@@ -832,6 +842,7 @@ Commands: /help /phase /plan /test /verify /done /model /login /logout /status /
 
   // CLI flag dispatch — no model/TTY needed
   if (opts.initDb) { bootstrap(opts); console.log(`DB: ${process.env.AGENT_SDLC_DB}`); return }
+  if (opts.compact) { await runCompact(opts); return }
   if (opts.eval) { await runEval(opts); return }
   if (opts.transition) { runTransition(opts); return }
 
