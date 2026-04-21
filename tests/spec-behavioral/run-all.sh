@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Test runner for CLEAN_ROOM_SPEC.md behavioral tests
 # Executes all tests in correct order: section-2 → section-4 → section-5 → section-6 → section-7 → section-8
+# Includes new tests for sections: 2.6, 4.7, 5.3, 5.7, 5.8, 5.9, 8.4, 8.8
 # Validates: Requirements 3.1, 3.2, 3.3, 3.4 from bugfix.md
+# Integrates: Coverage tracking and validation
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -103,6 +105,7 @@ for test_file in "$SCRIPT_DIR"/section-2.1-provider-enum.sh \
                  "$SCRIPT_DIR"/section-2.2-model-config.sh \
                  "$SCRIPT_DIR"/section-2.3-env-variables.sh \
                  "$SCRIPT_DIR"/section-2.5-turn-loop.sh \
+                 "$SCRIPT_DIR"/section-2.6-sessionstart-hook.sh \
                  "$SCRIPT_DIR"/section-2.9-repl-commands.sh \
                  "$SCRIPT_DIR"/section-2.10-provider-backends.sh; do
   run_test_file_once "$test_file"
@@ -126,6 +129,7 @@ for test_file in "$SCRIPT_DIR"/section-4.1-db-location.sh \
                  "$SCRIPT_DIR"/section-4.4-bootstrap.sh \
                  "$SCRIPT_DIR"/section-4.5-transcript.sh \
                  "$SCRIPT_DIR"/section-4.6-plans.sh \
+                 "$SCRIPT_DIR"/section-4.7-memory-ranking.sh \
                  "$SCRIPT_DIR"/section-4.8-concurrency.sh; do
   run_test_file_once "$test_file"
 done
@@ -146,9 +150,13 @@ echo "--- Section 5: Hook plane ---"
 
 for test_file in "$SCRIPT_DIR"/section-5.1-matcher-logic.sh \
                  "$SCRIPT_DIR"/section-5.2-ordinal-order.sh \
+                 "$SCRIPT_DIR"/section-5.3-hook-ordering.sh \
                  "$SCRIPT_DIR"/section-5.4-exit-codes.sh \
                  "$SCRIPT_DIR"/section-5.5-json-validation.sh \
                  "$SCRIPT_DIR"/section-5.6-permission-merge.sh \
+                 "$SCRIPT_DIR"/section-5.7-permission-dialog.sh \
+                 "$SCRIPT_DIR"/section-5.8-async-hooks.sh \
+                 "$SCRIPT_DIR"/section-5.9-hook-timeouts.sh \
                  "$SCRIPT_DIR"/section-5.11-hook-execution.sh \
                  "$SCRIPT_DIR"/section-5.12-permission-rules.sh; do
   run_test_file_once "$test_file"
@@ -181,11 +189,13 @@ echo "--- Section 8: Workflow state ---"
 for test_file in "$SCRIPT_DIR"/section-8.1-phase-enum.sh \
                  "$SCRIPT_DIR"/section-8.2-phase-transitions.sh \
                  "$SCRIPT_DIR"/section-8.3-planning-gate.sh \
+                 "$SCRIPT_DIR"/section-8.4-operator-hooks.sh \
                  "$SCRIPT_DIR"/section-8.5-epistemic-isolation.sh \
                  "$SCRIPT_DIR"/section-8.5.2-observable-assertions.sh \
                  "$SCRIPT_DIR"/section-8.5.3-anti-mock.sh \
                  "$SCRIPT_DIR"/section-8.6-coverage-gate.sh \
-                 "$SCRIPT_DIR"/section-8.7-verify-reporting.sh; do
+                 "$SCRIPT_DIR"/section-8.7-verify-reporting.sh \
+                 "$SCRIPT_DIR"/section-8.8-test-templates.sh; do
   run_test_file_once "$test_file"
 done
 
@@ -221,6 +231,28 @@ for test_file in "$SCRIPT_DIR"/bug-condition-coverage-gap-analysis.sh \
                  "$SCRIPT_DIR"/preservation-existing-tests.sh; do
   run_test_file_once "$test_file"
 done
+
+# ============================================================================
+# Coverage tracking and validation
+# ============================================================================
+echo ""
+echo "--- Coverage Tracking ---"
+
+# Generate coverage matrix
+echo -n "Generating coverage matrix... "
+if bash "$SCRIPT_DIR/coverage/coverage-tracker.sh" >/dev/null 2>&1; then
+  echo "OK"
+else
+  echo "WARNING: Coverage matrix generation failed"
+fi
+
+# Validate coverage
+echo -n "Validating coverage... "
+if bash "$SCRIPT_DIR/coverage/validate-coverage.sh" >/dev/null 2>&1; then
+  echo "OK (100% coverage)"
+else
+  echo "WARNING: Coverage validation failed or incomplete"
+fi
 
 echo ""
 echo "=== Results ==="
