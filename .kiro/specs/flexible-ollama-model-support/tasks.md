@@ -59,7 +59,7 @@ The implementation follows the phased approach specified in the design document,
     - Test source tracking (bootstrap-first-run, bootstrap-file-newer, bootstrap-db-preserved)
     - _Requirements: 4.3, 5.4, 5.5, 6.1, 6.2, 6.3, 19.1, 19.2, 19.3_
 
-- [ ] 2. Checkpoint - Verify persistence fix works correctly
+- [x] 2. Checkpoint - Verify persistence fix works correctly
   - Ensure all tests pass
   - Manually test: set model via /model, restart ona, verify model is preserved
   - Manually test: edit settings file, restart ona, verify file changes are respected
@@ -67,8 +67,8 @@ The implementation follows the phased approach specified in the design document,
 
 ### Phase 2: Custom Model Support
 
-- [ ] 3. Add custom_model_name support to model resolution
-  - [ ] 3.1 Update resolveWireModel() in lib/modelConfig.mjs
+- [x] 3. Add custom_model_name support to model resolution
+  - [x] 3.1 Update resolveWireModel() in lib/modelConfig.mjs
     - Add check for custom_model_name field at the beginning of function
     - If custom_model_name is present and non-empty, return it directly
     - Preserve existing WIRE map lookup logic as fallback
@@ -96,8 +96,8 @@ The implementation follows the phased approach specified in the design document,
     - Test empty custom_model_name falls back to WIRE map
     - _Requirements: 1.1, 1.2, 3.1, 3.2, 3.3, 12.3, 12.4, 12.5_
 
-- [ ] 4. Add provider capability system
-  - [ ] 4.1 Create PROVIDER_CAPABILITIES map in lib/modelConfig.mjs
+- [x] 4. Add provider capability system
+  - [x] 4.1 Create PROVIDER_CAPABILITIES map in lib/modelConfig.mjs
     - Define capabilities for each provider (supportsCustomModels, requiresHardcodedMap)
     - Set supportsCustomModels: true for openai_compatible, ollama, lm_studio_local
     - Set supportsCustomModels: false for claude_code_subscription, zhipu
@@ -110,8 +110,8 @@ The implementation follows the phased approach specified in the design document,
     - Test all providers have capability definitions
     - _Requirements: 2.1, 2.2, 2.5_
 
-- [ ] 5. Update model selection logic in bin/agent.mjs
-  - [ ] 5.1 Update resolveModelArg() function
+- [x] 5. Update model selection logic in bin/agent.mjs
+  - [x] 5.1 Update resolveModelArg() function
     - First, try exact match in hardcoded WIRE map (backward compatibility)
     - For provider/model format: parse and check provider capabilities
     - If provider supports custom models and no WIRE match: create config with custom_model_name
@@ -143,13 +143,13 @@ The implementation follows the phased approach specified in the design document,
     - Test provider/model parsing (split on first "/" only)
     - _Requirements: 1.4, 2.3, 2.4, 17.1, 17.2, 17.3, 17.4, 17.5, 18.1, 18.2, 18.3, 18.4_
 
-- [ ] 6. Update UI feedback for custom models
-  - [ ] 6.1 Update /model command confirmation message
+- [x] 6. Update UI feedback for custom models
+  - [x] 6.1 Update /model command confirmation message
     - Display "(custom)" suffix when custom_model_name is present
     - Distinguish between standard and custom models in output
     - _Requirements: 11.1, 11.2, 11.5_
   
-  - [ ] 6.2 Update /config command output
+  - [x] 6.2 Update /config command output
     - Show custom model indicator when applicable
     - Display current provider, model, and base URL
     - _Requirements: 11.3, 11.5_
@@ -161,14 +161,14 @@ The implementation follows the phased approach specified in the design document,
     - _Requirements: 11.1, 11.2, 11.3, 11.5_
 
 - [ ] 7. Add error handling for invalid configurations
-  - [ ] 7.1 Add validation in resolveModelArg()
+  - [x] 7.1 Add validation in resolveModelArg()
     - Validate provider is non-empty string
     - Validate model_id is non-empty string
     - Validate custom_model_name is non-empty if present
     - Reject custom_model_name for restricted providers
     - _Requirements: 12.1, 12.2, 25.1, 25.2, 25.3, 25.4, 25.5_
   
-  - [ ] 7.2 Improve error messages in bin/agent.mjs
+  - [x] 7.2 Improve error messages in bin/agent.mjs
     - Display descriptive error for unknown provider
     - Display error with valid models list for restricted providers
     - Display error for empty model names
@@ -191,7 +191,7 @@ The implementation follows the phased approach specified in the design document,
 ### Phase 3: Model Discovery
 
 - [ ] 9. Implement model discovery service
-  - [ ] 9.1 Create lib/modelDiscovery.mjs module
+  - [x] 9.1 Create lib/modelDiscovery.mjs module
     - Implement discoverOllamaModels(baseUrl, options) function
     - Construct discovery URL by removing trailing slashes and appending /api/tags
     - Make HTTP GET request with timeout (default 5000ms)
@@ -201,7 +201,7 @@ The implementation follows the phased approach specified in the design document,
     - Handle connection errors, timeouts, HTTP errors, malformed responses
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 15.1, 15.2, 15.3, 15.4, 16.1, 16.2, 16.3, 16.4, 16.5, 21.1, 21.2, 21.3, 21.4, 21.5, 23.1, 23.2, 23.3, 23.4, 23.5_
   
-  - [ ] 9.2 Implement formatModelList() function
+  - [x] 9.2 Implement formatModelList() function
     - Format model list for display with names and sizes
     - Sort models by modification date (newest first) by default
     - Support sorting by name or size via options
@@ -245,7 +245,7 @@ The implementation follows the phased approach specified in the design document,
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 22.1, 22.2, 22.3, 22.4, 22.5_
 
 - [ ] 10. Add provider discovery capabilities
-  - [ ] 10.1 Update PROVIDER_CAPABILITIES in lib/modelConfig.mjs
+  - [x] 10.1 Update PROVIDER_CAPABILITIES in lib/modelConfig.mjs
     - Add supportsDiscovery field to provider capabilities
     - Set supportsDiscovery: true for ollama with discoveryEndpoint: '/api/tags'
     - Set supportsDiscovery: false for all other providers
@@ -259,7 +259,7 @@ The implementation follows the phased approach specified in the design document,
     - _Requirements: 9.4, 9.5_
 
 - [ ] 11. Implement /models command in bin/agent.mjs
-  - [ ] 11.1 Add /models command handler
+  - [x] 11.1 Add /models command handler
     - Get current provider and base URL from settings
     - Check if provider supports discovery using supportsDiscovery()
     - If not supported: display error with list of supported providers and guidance
@@ -269,7 +269,7 @@ The implementation follows the phased approach specified in the design document,
     - Handle connection errors with specific troubleshooting tips
     - _Requirements: 7.1, 7.2, 7.3, 8.1, 8.2, 8.3, 8.4, 9.1, 9.2, 9.3_
   
-  - [ ] 11.2 Add getBaseUrlForProvider() helper function
+  - [x] 11.2 Add getBaseUrlForProvider() helper function
     - Resolve base URL for ollama provider (default: http://localhost:11434)
     - Use base_url from settings if present
     - Support other providers as needed
@@ -284,7 +284,7 @@ The implementation follows the phased approach specified in the design document,
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 9.1, 9.2, 9.3_
 
 - [ ] 12. Add error handling for discovery edge cases
-  - [ ] 12.1 Handle discovery with unsupported provider
+  - [x] 12.1 Handle discovery with unsupported provider
     - Check provider capabilities before attempting discovery
     - Display clear error message indicating discovery not supported
     - List providers that support discovery

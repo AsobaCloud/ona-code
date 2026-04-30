@@ -10,7 +10,7 @@ import { openStore } from '../lib/store.mjs'
 import { defaultDbPath } from '../lib/paths.mjs'
 import { resolveAnthropicCredentials, authStatusSummary, saveSecureCredentials, clearSecureCredentials, interactiveOAuthLogin } from '../lib/auth.mjs'
 import { bootstrapSettings, getEffectiveSettings, updateEffectiveSettings } from '../lib/settings.mjs'
-import { resolveWireModel, allModelIds } from '../lib/modelConfig.mjs'
+import { resolveWireModel, allModelIds, supportsCustomModels, supportsDiscovery } from '../lib/modelConfig.mjs'
 import { runHooks } from '../lib/hookplane.mjs'
 import { runUserTurn } from '../lib/orchestrate.mjs'
 import { closeAllMcpServers } from '../lib/mcp.mjs'
@@ -18,6 +18,7 @@ import { getPhase, canTransition, setPhase } from '../lib/workflow.mjs'
 import { executeBuiltinTool } from '../lib/tools.mjs'
 import { appendEntry, makeUserPayload, makeToolResultPayload } from '../lib/transcript.mjs'
 import { loadInstructions } from '../lib/instructions.mjs'
+import { discoverOllamaModels, formatModelList } from '../lib/modelDiscovery.mjs'
 import { compactConversation } from '../lib/compact.mjs'
 import { createTeam, getTeam, listTeams, deleteTeam } from '../lib/team.mjs'
 
@@ -159,6 +160,7 @@ Tools:
 
 Session:
   /model [name] Change model
+  /models       Discover available models
   /login        Authenticate
   /logout       Clear credentials
   /status       Auth status
@@ -225,14 +227,51 @@ Session:
         return
       }
       const resolved = resolveModelArg(arg)
-      if (!resolved) { app.addSystemMessage(`Unknown model: ${arg}`); return }
+      if (!resolved || resolved.error) { 
+        app.addSystemMessage(resolved?.error || `Unknown model: ${arg}`)
+        return 
+      }
       settings = updateEffectiveSettings(db, { model_config: resolved })
       try {
         const wire = resolveWireModel(settings.model_config)
-        app.addSystemMessage(`✓ Model: ${resolved.provider} / ${wire}`)
+        const isCustom = !!resolved.custom_model_name
+        app.addSystemMessage(`✓ Model: ${resolved.provider} / ${wire}${isCustom ? ' (custom)' : ''}`)
       } catch (e) { app.addSystemMessage(`Model set but: ${e.message}`) }
       if (process.env.SDLC_DISABLE_ALL_HOOKS !== '1') {
         await runHooks(db, makeHookRt(), 'ConfigChange', { source: 'user_settings' })
+      }
+      return
+    }
+
+    if (trimmed === '/models') {
+      const provider = settings.model_config?.provider
+      if (!provider) {
+        app.addSystemMessage('No provider configured. Use /model to set a provider first.')
+        return
+      }
+      
+      if (!supportsDiscovery(provider)) {
+        app.addSystemMessage(`Model discovery is not supported for provider: ${provider}\n\nProviders with discovery support:\n  ollama\n\nFor other providers, use /model <provider>/<model-name> directly.`)
+        return
+      }
+      
+      // Get base URL for the provider
+      const baseUrl = getBaseUrlForProvider(provider, settings)
+      
+      app.addSystemMessage(`Discovering models from ${baseUrl}...`)
+      
+      try {
+        const result = await discoverOllamaModels(baseUrl, { timeout: 5000 })
+        
+        if (!result.success) {
+          app.addSystemMessage(`\nDiscovery failed: ${result.error}\n\nTroubleshooting:\n  • Make sure Ollama is running: ollama serve\n  • Check the base URL in settings: /config\n  • Verify network connectivity to ${baseUrl}`)
+          return
+        }
+        
+        const formatted = formatModelList(result.models)
+        app.addSystemMessage(`\n${formatted}`)
+      } catch (error) {
+        app.addSystemMessage(`\nUnexpected error: ${error.message}`)
       }
       return
     }
@@ -342,10 +381,16 @@ Session:
       return
     }
 
-    if (trimmed === '/config' || trimmed === '/settings') {
-      app.addSystemMessage(JSON.stringify(settings, null, 2))
-      return
-    }
+    if (trimmed.startsWith('/config')) {
+           const parts = trimmed.split(' ')
+           if (parts[1] === 'base_url' && parts[2]) {
+              settings = updateEffectiveSettings(db, { model_config: { base_url: parts[2] } })
+              app.addSystemMessage(`✓ Saved base_url: ${parts[2]}`)
+           } else {
+              app.addSystemMessage(JSON.stringify(settings, null, 2))
+           }
+           return
+        }
 
     if (trimmed === '/clear' || trimmed === '/reset' || trimmed === '/new') {
       if (process.env.SDLC_DISABLE_ALL_HOOKS !== '1') {
@@ -570,10 +615,56 @@ async function mainPipe(opts) {
         continue
       }
       const resolved = resolveModelArg(arg)
-      if (!resolved) { io.println(ui.colors.error(`  Unknown model: ${arg}.`)); continue }
+      if (!resolved || resolved.error) { 
+        io.println(ui.colors.error(`  ${resolved?.error || `Unknown model: ${arg}`}`))
+        continue 
+      }
       settings = updateEffectiveSettings(db, { model_config: resolved })
-      try { const wire = resolveWireModel(settings.model_config); io.println(ui.formatModelChange(resolved.provider, resolved.model_id, wire)) }
+      try { 
+        const wire = resolveWireModel(settings.model_config)
+        const isCustom = !!resolved.custom_model_name
+        io.println(ui.formatModelChange(resolved.provider, resolved.model_id, wire, isCustom))
+      }
       catch (e) { io.println(`  ${ui.colors.warning('Model set but: ' + e.message)}`) }
+      continue
+    }
+    if (line === '/models') {
+      const provider = settings.model_config?.provider
+      if (!provider) {
+        io.println(ui.colors.error('  No provider configured. Use /model to set a provider first.'))
+        continue
+      }
+      
+      if (!supportsDiscovery(provider)) {
+        io.println(ui.colors.error(`  Model discovery is not supported for provider: ${provider}`))
+        io.println(`\n  ${ui.colors.header('Providers with discovery support:')}`)
+        io.println('    ollama')
+        io.println(`\n  ${ui.colors.dim('For other providers, use /model <provider>/<model-name> directly.')}`)
+        continue
+      }
+      
+      // Get base URL for the provider
+      const baseUrl = getBaseUrlForProvider(provider, settings)
+      
+      io.println(`\n  Discovering models from ${baseUrl}...\n`)
+      
+      try {
+        const result = await discoverOllamaModels(baseUrl, { timeout: 5000 })
+        
+        if (!result.success) {
+          io.println(ui.colors.error(`  Discovery failed: ${result.error}`))
+          io.println(`\n  ${ui.colors.header('Troubleshooting:')}`)
+          io.println('    • Make sure Ollama is running: ollama serve')
+          io.println('    • Check the base URL in settings: /config')
+          io.println(`    • Verify network connectivity to ${baseUrl}\n`)
+          continue
+        }
+        
+        const formatted = formatModelList(result.models)
+        io.println(formatted)
+      } catch (error) {
+        io.println(ui.colors.error(`  Unexpected error: ${error.message}`))
+      }
       continue
     }
     if (line === '/config' || line === '/settings') {
@@ -735,17 +826,87 @@ async function interactiveLogin(rl, io, bareMode) {
 }
 
 function resolveModelArg(arg) {
+  // Validate input
+  if (!arg || typeof arg !== 'string' || !arg.trim()) {
+    return { error: 'Model name cannot be empty' }
+  }
+  
   const all = allModelIds()
+  
+  // First, try exact match in hardcoded WIRE map (backward compatibility)
   if (arg.includes('/')) {
     const [p, m] = arg.split('/', 2)
+    
+    // Validate provider and model_id are non-empty
+    if (!p || !p.trim()) {
+      return { error: 'Provider name cannot be empty' }
+    }
+    if (!m || !m.trim()) {
+      return { error: 'Model name cannot be empty' }
+    }
+    
     const match = all.find(x => x.provider === p && x.model_id === m)
     if (match) return match
+    
+    // Check if provider exists
+    const knownProviders = ['claude_code_subscription', 'openai_compatible', 'zhipu', 'ollama', 'lm_studio_local']
+    if (!knownProviders.includes(p)) {
+      return { 
+        error: `Unknown provider: ${p}\n\nValid providers:\n  ${knownProviders.join('\n  ')}`
+      }
+    }
+    
+    // No WIRE match - check if provider supports custom models
+    if (supportsCustomModels(p)) {
+      // Create config with custom_model_name
+      return {
+        provider: p,
+        model_id: m,
+        custom_model_name: m
+      }
+    }
+    
+    // Provider doesn't support custom models - list valid models
+    const validModels = all.filter(x => x.provider === p).map(x => x.model_id)
+    return { 
+      error: `Provider ${p} does not support custom models.\n\nValid models for ${p}:\n  ${validModels.join('\n  ')}\n\nTo use custom models, try: ollama, openai_compatible, or lm_studio_local`
+    }
   }
+  
+  // Freeform name (no provider prefix)
+  // First, search WIRE map
   const match = all.find(x => x.model_id === arg)
   if (match) return match
-  // Freeform name → LM Studio; set env var (§2.2 forbids extra model_config keys)
-  process.env.LM_STUDIO_MODEL = arg
-  return { provider: 'lm_studio_local', model_id: 'lm_studio_server_routed' }
+  
+  // No WIRE match - default to openai_compatible with custom_model_name
+  return {
+    provider: 'openai_compatible',
+    model_id: arg,
+    custom_model_name: arg
+  }
+}
+
+function getBaseUrlForProvider(provider, settings) {
+  // Get base URL from settings or use defaults
+  if (settings.model_config?.base_url) {
+    return settings.model_config.base_url
+  }
+  
+  // Provider-specific defaults
+  if (provider === 'ollama') {
+    return process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+  }
+  
+  if (provider === 'lm_studio_local') {
+    return (process.env.LM_STUDIO_BASE_URL || 'http://127.0.0.1:1234/v1').replace(/\/$/, '')
+  }
+  
+  if (provider === 'openai_compatible') {
+    return process.env.OPENAI_BASE_URL || 'http://localhost:8080'
+  }
+  
+  // Generic fallback
+  return 'http://localhost:11434'
 }
 
 // ── CLI: --eval ──────────────────────────────────────────────
