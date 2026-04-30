@@ -16,7 +16,9 @@
     "repl": "node ./bin/agent.mjs",
     "verify": "node ./scripts/verify-sdlc-hook-order.mjs",
     "acceptance": "bash ./scripts/sdlc-acceptance.sh",
-    "test:bugs": "bash tests/bugs/run-all.sh"
+    "test:bugs": "bash tests/bugs/run-all.sh",
+    "test:property": "bash tests/property/run-settings-persistence-tests.sh",
+    "test:unit": "bash tests/unit/run-all.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -27,5 +29,8 @@
     "marked": "^15.0.12",
     "marked-terminal": "^7.3.0",
     "react": "^19.2.4"
+  },
+  "devDependencies": {
+    "fast-check": "^4.7.0"
   }
 }
