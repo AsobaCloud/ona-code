@@ -98,13 +98,15 @@ async function mainInteractive(opts) {
   // Resolve model info for banner
   let wireModel = '(not set)', endpoint = '(not configured)'
   const provider = settings.model_config?.provider || 'lm_studio_local'
+  const savedBaseUrl = settings.model_config?.base_url // Use persistent config
+  
   try {
     wireModel = resolveWireModel(settings.model_config)
-    const base = (process.env.LM_STUDIO_BASE_URL || 'http://127.0.0.1:1234/v1').replace(/\/$/, '')
+    const base = savedBaseUrl || (process.env.LM_STUDIO_BASE_URL || 'http://127.0.0.1:1234/v1').replace(/\/$/, '')
     endpoint = provider === 'lm_studio_local' ? `${base}/chat/completions`
       : provider === 'zhipu' ? 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
-      : provider === 'ollama' ? 'http://192.168.5.238:11435/v1/chat/completions'
-      : provider === 'openai_compatible' ? `${process.env.OPENAI_BASE_URL || '(unset)'}/chat/completions`
+      : provider === 'ollama' ? `${savedBaseUrl || 'http://localhost:11434/v1'}/chat/completions` // No more hardcoded IP
+      : provider === 'openai_compatible' ? `${savedBaseUrl || process.env.OPENAI_BASE_URL || '(unset)'}/chat/completions`
       : `${process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com'}/v1/messages`
   } catch (e) { wireModel = `(${e.message})` }
 
@@ -382,15 +384,15 @@ Session:
     }
 
     if (trimmed.startsWith('/config')) {
-           const parts = trimmed.split(' ')
-           if (parts[1] === 'base_url' && parts[2]) {
-              settings = updateEffectiveSettings(db, { model_config: { base_url: parts[2] } })
-              app.addSystemMessage(`✓ Saved base_url: ${parts[2]}`)
-           } else {
-              app.addSystemMessage(JSON.stringify(settings, null, 2))
-           }
-           return
-        }
+      const parts = trimmed.split(' ')
+      if (parts[1] === 'base_url' && parts[2]) {
+        settings = updateEffectiveSettings(db, { model_config: { base_url: parts[2] } })
+        app.addSystemMessage(`✓ Saved base_url: ${parts[2]}`)
+      } else {
+        app.addSystemMessage(JSON.stringify(settings, null, 2))
+      }
+      return
+    }
 
     if (trimmed === '/clear' || trimmed === '/reset' || trimmed === '/new') {
       if (process.env.SDLC_DISABLE_ALL_HOOKS !== '1') {
@@ -517,7 +519,10 @@ Session:
         app.stopLoading()
         return app.askUser(String(q || ''))
       },
-      spinner: { start: () => {}, stop: () => {} },
+      spinner: {
+        start: (_label) => { app.startLoading() },
+        stop: () => { app.stopLoading() },
+      },
       // Structured tool events for Ink UI
       onToolStart: (name) => { app.addToolStart(name) },
       onToolResult: (name, content, isError) => { app.addToolResult(name, content, isError) },
@@ -559,23 +564,25 @@ async function mainPipe(opts) {
   const ui = await import('../lib/ui.mjs')
 
   const rl = readline.createInterface({ input, output })
+  const spinner = new ui.Spinner({ write: s => output.write(s) })
   const io = {
-    write: s => output.write(s),
-    println: s => console.log(s),
-    ask: async (q) => { if (!process.stdin.isTTY) return 'y'; return rl.question(q) },
-    spinner: { start: () => {}, stop: () => {} },
+    write: s => { spinner.stop(); output.write(s) },
+    println: s => { spinner.stop(); console.log(s) },
+    ask: async (q) => { spinner.stop(); if (!process.stdin.isTTY) return 'y'; return rl.question(q) },
+    spinner: { start: (label) => spinner.start(label), stop: () => spinner.stop() },
   }
 
   // Pipe-mode banner
   const provider = settings.model_config?.provider || 'lm_studio_local'
+  const savedBaseUrl = settings.model_config?.base_url // Use persistent config
   let wireModel = '(not set)'
   try { wireModel = resolveWireModel(settings.model_config) } catch {}
   output.write(ui.printBanner(pkg.version, dbPath, opts.bare))
-  const base = (process.env.LM_STUDIO_BASE_URL || 'http://127.0.0.1:1234/v1').replace(/\/$/, '')
+  const base = savedBaseUrl || (process.env.LM_STUDIO_BASE_URL || 'http://127.0.0.1:1234/v1').replace(/\/$/, '')
   const endpoint = provider === 'lm_studio_local' ? `${base}/chat/completions`
     : provider === 'zhipu' ? 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
-    : provider === 'ollama' ? 'http://192.168.5.238:11435/v1/chat/completions'
-    : provider === 'openai_compatible' ? `${process.env.OPENAI_BASE_URL || '(unset)'}/chat/completions`
+    : provider === 'ollama' ? `${savedBaseUrl || 'http://localhost:11434/v1'}/chat/completions` // No more hardcoded IP
+    : provider === 'openai_compatible' ? `${savedBaseUrl || process.env.OPENAI_BASE_URL || '(unset)'}/chat/completions`
     : `${process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com'}/v1/messages`
   output.write(ui.printProviderBanner(provider, wireModel, endpoint))
   output.write(ui.colors.dim('  Type /help for commands\n\n'))
@@ -706,7 +713,7 @@ async function mainPipe(opts) {
       settings = getEffectiveSettings(db)
       const trt = { sessionId, conversationId, runtimeDbPath: dbPath, cwd, bareMode: opts.bare, settings }
       const results = await generateAndRunTests(db, trt, plan.content, s => io.println(`  ${s}`))
-      if (phase === 'implement') setPhase(db, conversationId, 'test')
+      if (phase === 'implement') setPhase(db, conversationId, 'test', 'cli_admin')
       const passed = results.filter(r => r.passed).length
       io.println(`  Tests: ${passed}/${results.length} passed`)
       continue
@@ -723,7 +730,7 @@ async function mainPipe(opts) {
     }
     if (line === '/done') {
       if (getPhase(db, conversationId) !== 'verify') { io.println('  Must be in verify phase.'); continue }
-      setPhase(db, conversationId, 'done')
+      setPhase(db, conversationId, 'done', 'cli_admin')
       const { spawnSync: sp } = await import('node:child_process')
       const plan = db.prepare(`SELECT content FROM plans WHERE conversation_id = ? AND status = 'approved' ORDER BY id DESC LIMIT 1`).get(conversationId)
       const planTitle = plan?.content?.split('\n').find(l => l.startsWith('#'))?.replace(/^#+\s*/, '') || 'SDLC workflow complete'
@@ -894,7 +901,7 @@ function getBaseUrlForProvider(provider, settings) {
   
   // Provider-specific defaults
   if (provider === 'ollama') {
-    return process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+    return process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1'
   }
   
   if (provider === 'lm_studio_local') {
@@ -902,18 +909,18 @@ function getBaseUrlForProvider(provider, settings) {
   }
   
   if (provider === 'openai_compatible') {
-    return process.env.OPENAI_BASE_URL || 'http://localhost:8080'
+    return process.env.OPENAI_BASE_URL || 'http://localhost:8080/v1'
   }
   
   // Generic fallback
-  return 'http://localhost:11434'
+  return 'http://localhost:11434/v1'
 }
 
 // ── CLI: --eval ──────────────────────────────────────────────
 async function runEval(opts) {
   const ctx = bootstrap(opts)
   let parsed
-  try { parsed = JSON.parse(opts.eval) } catch (e) { console.error(`Invalid JSON: ${e.message}`); process.exit(1) }
+  try { parsed = JSON.parse(opts.eval) } catch (e) { console.error(`Invalid JSON: \${e.message}`); process.exit(1) }
   const toolName = parsed.tool
   const toolInput = parsed.input || {}
   if (!toolName) { console.error('Missing "tool" in eval JSON'); process.exit(1) }
@@ -962,8 +969,8 @@ async function runCompact(opts) {
   const sess = db.prepare(`SELECT session_id FROM sessions WHERE conversation_id = ? ORDER BY started_at DESC LIMIT 1`).get(convId)
   const sessionId = sess?.session_id || ctx.sessionId
   const rt = { sessionId, conversationId: convId, runtimeDbPath: dbPath, cwd, bareMode: opts.bare, settings }
-  const summary = await compactConversation(db, rt, async (text) => `[Compacted: ${text.split('\n').length} messages]`, s => console.log(s))
-  if (summary) console.log(`Summary: ${summary}`)
+  const summary = await compactConversation(db, rt, async (text) => `[Compacted: \${text.split('\\n').length} messages]`, s => console.log(s))
+  if (summary) console.log(`Summary: \${summary}`)
   process.exit(0)
 }
 
@@ -974,8 +981,8 @@ function runTransition(opts) {
   const toPhase = opts.transition
   const check = canTransition(ctx.db, convId, toPhase)
   if (!check.ok) { console.error(check.reason); process.exit(1) }
-  setPhase(ctx.db, convId, toPhase)
-  console.log(`Phase: ${toPhase}`)
+  setPhase(ctx.db, convId, toPhase, 'cli_admin')
+  console.log(`Phase: \${toPhase}`)
   process.exit(0)
 }
 
@@ -1002,7 +1009,7 @@ Commands: /help /phase /plan /test /verify /done /model /login /logout /status /
   }
 
   // CLI flag dispatch — no model/TTY needed
-  if (opts.initDb) { bootstrap(opts); console.log(`DB: ${process.env.AGENT_SDLC_DB}`); return }
+  if (opts.initDb) { bootstrap(opts); console.log(`DB: \${process.env.AGENT_SDLC_DB}`); return }
   if (opts.compact) { await runCompact(opts); return }
   if (opts.eval) { await runEval(opts); return }
   if (opts.transition) { runTransition(opts); return }
