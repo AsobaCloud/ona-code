@@ -124,7 +124,7 @@ async function mainInteractive(opts) {
     onUserInput: async (text) => {
       await handleInput(text)
     },
-    onExit: () => shutdown(),
+    onExit: async () => { await shutdown() },
   })
 
   async function handleInput(line) {
@@ -233,7 +233,7 @@ Session:
         app.addSystemMessage(resolved?.error || `Unknown model: ${arg}`)
         return 
       }
-      settings = updateEffectiveSettings(db, { model_config: resolved })
+      settings = updateEffectiveSettings(db, { model_config: { ...resolved, custom_model_name: resolved.custom_model_name || null } })
       try {
         const wire = resolveWireModel(settings.model_config)
         const isCustom = !!resolved.custom_model_name
@@ -388,6 +388,11 @@ Session:
       if (parts[1] === 'base_url' && parts[2]) {
         settings = updateEffectiveSettings(db, { model_config: { base_url: parts[2] } })
         app.addSystemMessage(`✓ Saved base_url: ${parts[2]}`)
+      } else if (parts[1] === 'num_ctx' && parts[2]) {
+        const n = parseInt(parts[2], 10)
+        if (isNaN(n) || n < 512) { app.addSystemMessage('num_ctx must be a number ≥ 512'); return }
+        settings = updateEffectiveSettings(db, { model_config: { num_ctx: n } })
+        app.addSystemMessage(`✓ Saved num_ctx: ${n}`)
       } else {
         app.addSystemMessage(JSON.stringify(settings, null, 2))
       }
@@ -507,15 +512,18 @@ Session:
     let streamBuf = ''
     const io = {
       write: s => {
-        app.stopLoading()
+        // Do not stop the spinner here — the orchestrator calls io.spinner.stop()
+        // explicitly at the right moment. Stopping on every write causes flicker.
         streamBuf += s
         app.updateStream(streamBuf)
       },
       println: s => {
-        app.stopLoading()
+        // Same — don't stop spinner on intermediate messages (tool results, phase notices).
+        // The spinner is stopped explicitly by the orchestrator before user-facing gates.
         if (s) app.addSystemMessage(String(s))
       },
       ask: async (q) => {
+        // Asking the user requires stopping — they need to see the prompt and type.
         app.stopLoading()
         return app.askUser(String(q || ''))
       },
@@ -540,6 +548,15 @@ Session:
     if (process.env.SDLC_DISABLE_ALL_HOOKS !== '1') {
       await runHooks(db, makeHookRt(), 'SessionEnd', { reason: 'prompt_input_exit' })
     }
+    // Print session summary before exit
+    try {
+      const { getSessionTokens } = await import('../lib/orchestrate.mjs')
+      const { formatSessionSummary } = await import('../lib/ui.mjs')
+      const tokens = getSessionTokens(sessionId)
+      let model = '(unknown)', provider = settings?.model_config?.provider || 'unknown'
+      try { model = resolveWireModel(settings.model_config) } catch {}
+      process.stdout.write(formatSessionSummary(sessionId, tokens, model, provider))
+    } catch {}
     closeAllMcpServers()
     app.instance?.unmount()
     process.exit(0)
@@ -626,7 +643,7 @@ async function mainPipe(opts) {
         io.println(ui.colors.error(`  ${resolved?.error || `Unknown model: ${arg}`}`))
         continue 
       }
-      settings = updateEffectiveSettings(db, { model_config: resolved })
+      settings = updateEffectiveSettings(db, { model_config: { ...resolved, custom_model_name: resolved.custom_model_name || null } })
       try { 
         const wire = resolveWireModel(settings.model_config)
         const isCustom = !!resolved.custom_model_name
@@ -807,6 +824,14 @@ async function mainPipe(opts) {
   }
 
   if (process.env.SDLC_DISABLE_ALL_HOOKS !== '1') await runHooks(db, makeHookRt(), 'SessionEnd', { reason: 'prompt_input_exit' })
+  // Print session summary before exit
+  try {
+    const { getSessionTokens } = await import('../lib/orchestrate.mjs')
+    const tokens = getSessionTokens(sessionId)
+    let model = '(unknown)', provider = settings?.model_config?.provider || 'unknown'
+    try { model = resolveWireModel(settings.model_config) } catch {}
+    output.write(ui.formatSessionSummary(sessionId, tokens, model, provider))
+  } catch {}
   closeAllMcpServers()
   rl.close()
 }
