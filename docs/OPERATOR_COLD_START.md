@@ -48,6 +48,45 @@ From clean clone to first successful model turn in ≤12 steps.
 4. `npm start`
 5. Run `/login` and choose option 4 to save your ZAI API key
 
+## Remote Ollama (another machine on the LAN)
+
+Use this when Ollama is running on a different machine (e.g. a Windows PC on the same network).
+See [OLLAMA_WINDOWS_SERVER_SETUP.md](./OLLAMA_WINDOWS_SERVER_SETUP.md) for how to configure the server side.
+
+**Prerequisites:** Ollama must be running on the remote machine with `OLLAMA_HOST=0.0.0.0` and port 11434 open in the firewall.
+
+1. `git clone <repo-url> ona-code && cd ona-code`
+2. `npm install`
+3. Create `.ona/settings.json` pointing at the remote host:
+   ```bash
+   mkdir -p .ona && cat > .ona/settings.json << 'EOF'
+   {
+     "model_config": {
+       "provider": "openai_compatible",
+       "model_id": "gpt_4o",
+       "base_url": "http://AsobaCorp-1.local:11434/v1"
+     }
+   }
+   EOF
+   ```
+   Replace `AsobaCorp-1.local` with your machine's hostname or IP address.
+4. `npm start`
+5. Switch to the model you want to use:
+   ```
+   ona> /model openai_compatible/deepseek-coder-v2:latest
+   ```
+   Any model name from `ollama list` on the remote machine works here.
+6. Type a message at the `ona>` prompt — the request is forwarded to the remote Ollama server
+
+**Notes:**
+- The `openai_compatible` provider is used because Ollama's `/v1/chat/completions` endpoint is OpenAI-compatible. This is the recommended approach for remote Ollama.
+- Alternatively, use `provider: ollama` — this also enables the `/models` command for live model discovery from the REPL:
+  ```bash
+  {"model_config":{"provider":"ollama","model_id":"qwen2_5_14b","base_url":"http://AsobaCorp-1.local:11434/v1"}}
+  ```
+  Then run `/models` in the REPL to list all models installed on the remote server.
+- The `base_url` is persisted in SQLite after first use — you can also change it at runtime with `/config` or by editing `.ona/settings.json` and restarting.
+
 ## Verify
 
 ```bash
